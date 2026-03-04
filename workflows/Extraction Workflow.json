@@ -1,0 +1,127 @@
+{
+  "name": "Extraction Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8bf54ac7-84e8-46fc-b0ff-8ef09c18a1ac",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\nconst axios = require(\"axios\");\n\n// read transcript\nconst transcript = fs.readFileSync(\n  \"/dataset/demo_calls/transcript.txt\",\n  \"utf8\"\n);\n\n// strict prompt\nconst prompt = `\nYou are a strict data extraction system.\n\nExtract business configuration from this transcript.\n\nReturn ONLY valid JSON.\n\nRules:\n- Output must start with { and end with }\n- Do not include explanations\n- Do not include markdown\n- If information is missing return null\n- Never assume missing information\n\nJSON schema:\n\n{\n \"account_id\": \"transcript\",\n \"company_name\": null,\n \"business_hours\": null,\n \"office_address\": null,\n \"services_supported\": [],\n \"emergency_definition\": [],\n \"emergency_routing_rules\": null,\n \"non_emergency_routing_rules\": null,\n \"call_transfer_rules\": null,\n \"integration_constraints\": [],\n \"after_hours_flow_summary\": null,\n \"office_hours_flow_summary\": null,\n \"questions_or_unknowns\": [],\n \"notes\": null\n}\n\nTranscript:\n${transcript}\n`;\n\n// call ollama\nconst response = await axios.post(\n  \"http://host.docker.internal:11434/api/generate\",\n  {\n    model: \"llama3\",\n    prompt: prompt,\n    stream: false\n  }\n);\n\nreturn [\n  {\n    json: {\n      raw_output: response.data.response\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "4d2371fb-cf0c-4779-87ed-8841d77156d2",
+      "name": "Ollama Extraction"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\n// read memo\nconst memoPath = items[0].json.memo_saved;\n\nconst memo = JSON.parse(\n  fs.readFileSync(memoPath, \"utf8\")\n);\n\nconst accountId = memo.account_id || \"transcript\";\n\nconst agent = {\n\n  version: \"v1\",\n\n  agent_name: `${memo.company_name || \"Service\"} AI Assistant`,\n\n  voice_style: \"calm professional\",\n\n  variables: {\n\n    timezone: memo.business_hours?.timezone || null,\n\n    business_hours: memo.business_hours || null,\n\n    office_address: memo.office_address || null\n\n  },\n\n  system_prompt: `\nYou are Clara, an AI call assistant for ${memo.company_name || \"a service company\"}.\n\nYou handle inbound service calls and route them appropriately.\n\nDo NOT mention internal systems or tools.\n\nBUSINESS HOURS FLOW:\n\n1. Greet caller\n2. Ask how you can help\n3. Collect caller name\n4. Collect caller phone number\n5. Determine request type\n6. Transfer to dispatcher if needed\n7. If transfer fails apologize and promise callback\n8. Ask if anything else is needed\n9. Close the call politely\n\nAFTER HOURS FLOW:\n\n1. Greet caller\n2. Ask purpose of call\n3. Determine if emergency\n4. If emergency collect:\n   - name\n   - phone number\n   - service address\n5. Attempt transfer to on-call technician\n6. If transfer fails apologize and confirm quick follow-up\n7. If non-emergency collect details for next business day\n8. Ask if anything else is needed\n9. Close the call\n`,\n\n  call_transfer_protocol: {\n\n    timeout_seconds: 60,\n\n    retries: 2\n\n  },\n\n  fallback_protocol: \"If transfer fails after retries, apologize and confirm dispatch will return the call shortly.\"\n\n};\n\n// output directory\nconst outDir = `/outputs/accounts/${accountId}/v1`;\n\n// save agent spec\nfs.writeFileSync(\n  `${outDir}/agent_spec.json`,\n  JSON.stringify(agent, null, 2)\n);\n\nreturn [\n  {\n    json: {\n      agent_spec_saved: `${outDir}/agent_spec.json`\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        0
+      ],
+      "id": "aef041c4-f38e-45f9-95f4-df4042b79a30",
+      "name": "Agent Spec Generation v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\nconst memo = items[0].json;\n\nconst accountId = memo.account_id || \"transcript\";\n\nconst outputDir = `/outputs/accounts/${accountId}/v1`;\n\nfs.mkdirSync(outputDir, { recursive: true });\n\nfs.writeFileSync(\n  `${outputDir}/memo.json`,\n  JSON.stringify(memo, null, 2)\n);\n\nreturn [\n  {\n    json: {\n      memo_saved: `${outputDir}/memo.json`,\n      account_id: accountId\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        0
+      ],
+      "id": "12313490-861d-4e55-83b7-58b8aa494188",
+      "name": "Memo Generation v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "let raw = items[0].json.raw_output;\n\n// clean markdown if model added it\nraw = raw.replace(/```json/g, \"\")\n         .replace(/```/g, \"\")\n         .trim();\n\n// extract JSON block\nconst match = raw.match(/\\{[\\s\\S]*\\}/);\n\nlet memo;\n\nif (match) {\n  try {\n    memo = JSON.parse(match[0]);\n  } catch (err) {\n    memo = {\n      error: \"Invalid JSON from LLM\",\n      raw_output: raw\n    };\n  }\n} else {\n  memo = {\n    error: \"No JSON detected\",\n    raw_output: raw\n  };\n}\n\n// enforce schema\nmemo.services_supported = memo.services_supported || [];\nmemo.emergency_definition = memo.emergency_definition || [];\nmemo.integration_constraints = memo.integration_constraints || [];\nmemo.questions_or_unknowns = memo.questions_or_unknowns || [];\n\n// detect missing fields\nif (!memo.company_name) {\n  memo.questions_or_unknowns.push(\"company_name missing from transcript\");\n}\n\nif (!memo.business_hours) {\n  memo.questions_or_unknowns.push(\"business_hours not specified\");\n}\n\nif (!memo.office_address) {\n  memo.questions_or_unknowns.push(\"office_address not mentioned\");\n}\n\nreturn [\n  {\n    json: memo\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        0
+      ],
+      "id": "ae5c0fd4-4d80-48ee-b3a3-b084d5a6651e",
+      "name": "Validation and Schema Checkups"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Ollama Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Extraction": {
+      "main": [
+        [
+          {
+            "node": "Validation and Schema Checkups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memo Generation v1": {
+      "main": [
+        [
+          {
+            "node": "Agent Spec Generation v1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation and Schema Checkups": {
+      "main": [
+        [
+          {
+            "node": "Memo Generation v1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b89df7fe-c5d4-444c-9c58-7d0ff619c42b",
+  "meta": {
+    "instanceId": "41175d3e628a9ca9cabe2092e7d85d34a7c5939eae2721ea1403d4e9737ff51d"
+  },
+  "id": "0kR6nGuwvLAGSrU8",
+  "tags": []
+}

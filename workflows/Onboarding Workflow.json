@@ -1,0 +1,151 @@
+{
+  "name": "Onboarding Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "37b8a9d1-1986-4966-9ead-3d5c64582bb9",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\nconst axios = require(\"axios\");\n\nconst transcript = fs.readFileSync(\n  \"/dataset/onboarding_calls/transcript.txt\",\n  \"utf8\"\n);\n\nconst prompt = `\nYou are updating an existing system configuration.\n\nExtract ONLY updated fields from the onboarding transcript.\n\nReturn JSON patch.\n\nRules:\n- Only include fields mentioned in transcript\n- Do NOT include fields that are unchanged\n- Do NOT guess missing values\n\nPossible fields:\nbusiness_hours\nemergency_definition\nemergency_routing_rules\ncall_transfer_rules\nintegration_constraints\noffice_address\n\nTranscript:\n${transcript}\n`;\n\nconst response = await axios.post(\n  \"http://host.docker.internal:11434/api/generate\",\n  {\n    model: \"llama3\",\n    prompt: prompt,\n    stream: false\n  }\n);\n\nreturn [\n  {\n    json: {\n      update_patch: response.data.response\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e752b829-a999-417e-8a39-91b17895c07a",
+      "name": "Extract Onboarding Updates"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\nconst patch = items[0].json.patch;\n\nconst accountId = \"transcript\";\n\nconst v1Path = `/outputs/accounts/${accountId}/v1/memo.json`;\n\nconst v1 = JSON.parse(\n  fs.readFileSync(v1Path,\"utf8\")\n);\n\n// merge\nconst v2 = {\n  ...v1,\n  ...patch\n};\n\nconst v2Dir = `/outputs/accounts/${accountId}/v2`;\n\nfs.mkdirSync(v2Dir,{recursive:true});\n\nfs.writeFileSync(\n  `${v2Dir}/memo.json`,\n  JSON.stringify(v2,null,2)\n);\n\nreturn [\n {\n   json:{\n     v1:v1,\n     v2:v2,\n     accountId:accountId\n   }\n }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "97136dea-bc44-4f44-943f-770a0367f684",
+      "name": "Merge with V1 memo"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\nconst v1 = items[0].json.v1;\nconst v2 = items[0].json.v2;\nconst accountId = items[0].json.accountId;\n\nconst changes = [];\n\nfor (const key in v2) {\n\n if (JSON.stringify(v1[key]) !== JSON.stringify(v2[key])) {\n\n   changes.push({\n     field:key,\n     previous:v1[key],\n     updated:v2[key]\n   });\n\n }\n\n}\n\nfs.writeFileSync(\n  `/outputs/accounts/${accountId}/changes.json`,\n  JSON.stringify(changes,null,2)\n);\n\nreturn [{json:{changes}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "c65afd06-c819-42f8-8237-16e1f0188f1b",
+      "name": "Generate Change Log"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\nconst v2 = items[0].json.v2;\nconst accountId = items[0].json.accountId;\n\nconst agent = {\n\n  version:\"v2\",\n\n  agent_name:`${v2.company_name} Assistant`,\n\n  variables:{\n    business_hours:v2.business_hours,\n    address:v2.office_address\n  },\n\n  system_prompt:`\nYou are Clara AI for ${v2.company_name}.\n\nFollow updated business rules.\n\nBusiness hours:\n${JSON.stringify(v2.business_hours)}\n\nEmergency definitions:\n${JSON.stringify(v2.emergency_definition)}\n`\n};\n\nconst outDir = `/outputs/accounts/${accountId}/v2`;\n\nfs.writeFileSync(\n  `${outDir}/agent_spec.json`,\n  JSON.stringify(agent,null,2)\n);\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "1ed54227-8dd8-4941-852f-75b89a293011",
+      "name": "Generate V2 Agent Spec"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\n\nconst memo = items[0].json;\n\nconst accountId = memo.account_id || \"transcript\";\n\nconst outputDir = `/outputs/accounts/${accountId}/v1`;\n\nfs.mkdirSync(outputDir, { recursive: true });\n\nfs.writeFileSync(\n  `${outputDir}/memo.json`,\n  JSON.stringify(memo, null, 2)\n);\n\nreturn [\n  {\n    json: {\n      memo_saved: `${outputDir}/memo.json`,\n      account_id: accountId\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "54fb8680-f51c-484c-871b-8c5d9522e7a6",
+      "name": "Validation Patches"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Extract Onboarding Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Onboarding Updates": {
+      "main": [
+        [
+          {
+            "node": "Validation Patches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge with V1 memo": {
+      "main": [
+        [
+          {
+            "node": "Generate V2 Agent Spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate V2 Agent Spec": {
+      "main": [
+        [
+          {
+            "node": "Generate Change Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Patches": {
+      "main": [
+        [
+          {
+            "node": "Merge with V1 memo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "8454c478-5381-458e-8d59-8fec17b336f1",
+  "meta": {
+    "instanceId": "41175d3e628a9ca9cabe2092e7d85d34a7c5939eae2721ea1403d4e9737ff51d"
+  },
+  "id": "nfserlesVmw1CSTq",
+  "tags": []
+}
