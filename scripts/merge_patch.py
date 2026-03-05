@@ -12,4 +12,5 @@ with open(patch_path) as f:
 
 v2 = {**v1, **patch}
 
+
 print(json.dumps(v2, indent=2))
