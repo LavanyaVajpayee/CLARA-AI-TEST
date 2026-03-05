@@ -349,7 +349,7 @@ Example:
 Stored at:
 
 ```
-outputs/accounts/<account_id>/changes.json
+outputs/accounts/<account_id>/changes.json   (here it trasnscript)
 ```
 
 This provides clear traceability for configuration updates.
