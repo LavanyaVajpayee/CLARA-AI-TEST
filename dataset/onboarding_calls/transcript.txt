@@ -206,7 +206,7 @@ Sounds good. We'll have the testing piece taken care of in the following convers
 
 That'd be great. I like it. Cool. 
 
-Then just watch out for my email there. Then I'll drop the details of the agent, the number, which you can dial to talk to the agent. Nothing is live yet. 
+Then just watch out for my email there. Then I'll drop the details of the agent, the number, which you can dial to talk to the agent. Nothing is live yet.   
 
 So you can directly call that number, have a conversation, see how the agent responds. And you're going to see the post-call workflow in that way as well. Yeah. 
 
